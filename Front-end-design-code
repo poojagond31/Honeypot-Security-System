@@ -1,0 +1,262 @@
+<?php
+ if ( !defined( 'OV_SECURE' ))
+ die('You cannot call this file directly!');
+
+ // apply url-deocding function to strings in referrer before printing
+ if (defined('URL_DECODE') && URL_DECODE == true ) // must be set
+in constant.php
+ $decode_urls = true;
+ else
+ $decode_urls = false;
+
+ // default mode for overview-listing
+ $defaultMode = 2;
+
+
+ // break referrer after x characters
+ $wwrapReferrer = 125;
+ $wwrapOverview = 130;
+
+ // identifies browser out of user-agent string
+ include "browserCheck.php";
+
+ // include filtering-functions
+ include "filters.php";
+
+ // include functions for table output
+include "printTable.php";
+ include "attacklist.php";
+// object with attack-arrays
+ $attacks = new attacklist();
+ // becomes true as soon as at least one attack per table was found
+ $detected = false;
+ // string containing names of detected attacks, for printing out
+ $detectionStr = attacklist::getNoDetectionStr();
+ // show images for detected attacks , instead of strings
+ $showImages = false;
+ // string containing the summarizing table
+ $tableString = "";
+
+ // show Empty variables
+ $showEmpty = true;
+
+ // Character to put into output-string between left and right side of
+variables
+ $varSeparationSign = " = ";
+ // init table-color-vars
+ $old_remote_addr = "";
+ $colorValue = false;
+
+ // activate search-function
+ include "searchEngine.php";
+ // SESSION-MANAGEMENT
+ //-------------------
+ // erase old session
+ if ( isset( $_GET['delete'] )){
+ unset( $_SESSION['sIdArray'] );
+ unset( $_SESSION['sMode'] );
+ unset( $_SESSION['sStart'] );
+ unset( $_SESSION['sEnd'] );
+ unset( $_SESSION['sString'] );
+ //unset( $_SESSION['ip'] );
+ } ;
+
+
+ // set string of listingMode for filter-function
+$allowedLModes = array( "all", "none", "white", "black"); // OverviewListing-Modes:
+0 = all, 1 = none, 2 = whitelisting, 3 = blacklisting ,
+compare filters.php
+ $overviewModeStr = $allowedLModes[ $listingMode ]; // $listingMode
+was set by config
+ // set maximum time limit for execution of this script
+ set_time_limit( 180 );
+
+ // create list of tables to search through
+ $table_array = array();
+
+ array_push( $table_array, "Value_Server", "Value_Get", "Value_Post",
+"Value_Cookie" );
+
+ $sql = "SELECT ID, attackerIP, attackerBrowser, Source, Value_Server,
+Value_Get,
+ Value_Post, Value_Cookie, Creation FROM
+ main_logs
+ ORDER BY
+ ID DESC
+ LIMIT ".$startEntry.",".$showRange;
+ $result_serv = mysql_query($sql) OR die(mysql_error());
+
+ //echo $searchEngine->addQuery();
+
+ // go through server_vars
+ if ( mysql_num_rows( $result_serv )) {
+ while($row = mysql_fetch_assoc( $result_serv )) {
+ $id = abs((int)$row['ID']);
+ $filteredVars = false; // if extra-filtered vars for overviewdisplay
+have been found, this var becomes true
+
+ // init variables for attack-detection ( as new table starts )
+ $detected = false;
+ $detectionStr = attacklist::getNoDetectionStr();
+
+ // initialize variables for storage of $_SERVER-data
+ $referrer = "no referrer";
+ $remote_address = "no remote ip";
+ $http_user_agent = "";
+ $source = "unknown";
+ $creationTime = "time unknown";
+ // init module-vars
+ $addonModuleName = ""; 
+
+ // init string holding each of the tables
+ $tableString = "";
+
+ // for each table create output-string and finally print it out
+ foreach ( $table_array AS $tarrayId => $tarrayVal ) {
+ $outputString[ $tarrayId ] = "";
+
+ //$row['Value'] = str_replace( '&lt;DIR&gt;', " <br>",
+$row['Value'] ); // remove string &lt;DIR&gt; for phpshell
+ $valueArray = explode( ";semcl", $row[ $tarrayVal] );
+// split into variable pairs x=bla
+
+ // for each row: split it into variable pairs and print
+them out
+ foreach ( $valueArray AS $arrKey => $arrVal) {
+ if ( $arrVal != "" ) {
+ $oneLine = explode( "=", $arrVal , 2); //
+split into variable and value
+
+// filter $_SERVER array
+$leftSide = isset($oneLine[0]) ? $oneLine[0] :
+"";
+ $rightSide = isset($oneLine[1]) ? $oneLine[1] :
+"";
+ if ( $tarrayId == 0 ) {
+ $source = $row['Source'];
+// -----------HONEY PAGE--------
+----------
+$honey_page_flag = 0;
+if ($source ==
+'/wordpress/userlog/loginform.php')
+{
+//set honey page flag
+$honey_page_flag=1;
+}
+//------------------END------------
+-------
+
+
+ $creationTime = $row['Creation'];
+ // $addonModuleName = $row['Module']; 
+if ( isset( $row['attackerIP'] ) &&
+$row['attackerIP'] != "" )
+ $remote_address = $row['attackerIP'];
+ // next 2 lines just for compatibility
+reasons:
+ if ( $remote_address == "no remote ip" &&
+$leftSide == "REMOTE_ADDR" )
+ $remote_address = $rightSide; //."OLD";
+
+if ( $leftSide == "HTTP_REFERER")
+ $referrer = $rightSide ;
+
+ if ( isset( $row['attackerBrowser'] ) &&
+$row['attackerBrowser'] != "" )
+ $http_user_agent =
+$row['attackerBrowser'];
+ // next 2 lines just for compatibility
+reasons:
+ if ( $leftSide == "HTTP_USER_AGENT")
+ $http_user_agent = $rightSide;
+ } else {
+ $tmpAttack = attackChecking( $leftSide,
+$rightSide, $attacks,$honey_page_flag);
+ if ( $tmpAttack !== -1) {
+ if ( $detected === false )
+ $detectionStr = "";
+ $detected = true;
+if ( (strpos( $detectionStr,
+$tmpAttack) === false ) ) {
+ $detectionStr .= $tmpAttack." ";
+
+ }
+ }
+ }
+
+
+ if ( $tarrayId != 0 & filterVars( $oneLine,
+$overviewModeStr)) {
+ if ( isset($oneLine[1] ))
+ if ( $leftSide != "" && ( $rightSide != "" |
+$showEmpty == true )) {
+ $outputString[$tarrayId] .= "\t<span
+class=\"variable_leftpart\">".
+wordwrap( $leftSide,
+$wwrapOverview, "<br>\n" , true ) ." = ".
+ "</span><span
+class=\"variable_rightpart\">".
+ wordwrap( $rightSide,
+$wwrapOverview, "<br>\n" , true )."</span>";
+
+ $outputString[$tarrayId] .= "<br>\n"; //
+one line for each variable
+ $filteredVars = true;
+ }
+ } // end: filterVars
+ }
+
+ $outputString[ $tarrayId ] .= ""; //<br>\n"; // one
+line for each variable
+ } // end: foreach row
+
+ // DELETE print out data for this table and id
+ //$outputString[ $tarrayId ] .= "</div>\n "; // div
+$tarrayVal
+
+ //echo nl2br($row['Value']); // \n in <br /> umwandeln
+
+ }//foreach table
+ // determine table color: switch if 'new-attack' (meaning other ip
+or time)
+ if ( !(strcmp( $old_remote_addr, $remote_address ) == 0 )) {
+ $colorValue = ($colorValue xor true);
+ }
+ $old_remote_addr = $remote_address; // store current remote address
+if($honey_page_flag==1 && $detectionStr=="no attack found")
+ {
+// echo "111".$detectionStr;
+$detectionStr=" Honey Pages";
+ }
+ else if($honey_page_flag==1)
+ {
+// echo "111".$detectionStr;
+$detectionStr .= " Honey Page"." ";
+ }
+ // get string for first two rows of main table, incl. evaluation 
+$tableString .= getTable( $id, $source, $remote_address,
+$http_user_agent, $creationTime, $referrer, $decode_urls, $wwrapReferrer,
+$detectionStr, $colorValue, false, HIGHLIGHT_ATTACKS, HIGHLIGHT_REFERRER );
+
+ if ($filteredVars) {
+ $tableString .= '<tr>
+ <td class="blind"></td>
+<td colspan="5" class="ref_'.($colorValue
+? "a" : "b").'">';
+ // print out data for each array
+ foreach ( $table_array AS $tarrayId => $tarrayVal ) {
+ if ( isset( $outputString[ $tarrayId ] ))
+ $tableString .= $outputString[ $tarrayId ];
+ }
+ $tableString .= '</td></tr>';
+ }
+
+ // end table from 'getTable'
+ $tableString .= '</table>';
+ // print out table
+ echo $tableString;
+ } // end: while
+ } else
+ echo "No data found "; // end: if
+
+?>
